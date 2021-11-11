@@ -79,6 +79,7 @@ We provide an example training script `run_adcse.sh` for AdCSE. Note that we onl
 We explain the arguments in following:
 * `--train_file`: Training file path. We support "txt" files (one line for one sentence) and "csv" files (2-column: pair data with no hard negative; 3-column: pair data with one corresponding hard negative instance). You can use the provided Wikipedia data, or you can use your own data with the same format.
 * `--model_name_or_path`: Pre-trained checkpoints to start with.
+* `--learning_rate`: Learning rate of encoder $q$.
 * `--pooler_type`: Pooling method. It's the same as the `--pooler_type` in the [evaluation part](#evaluation).
 * `--mlp_only_train`: We have found that for unsupervised AdCSE, it works better to train the model with MLP layer but test the model without it. You should use this argument when training unsupervised AdCSE models.
 * `--moco_m`: Momentum for updating encoder $p$.
