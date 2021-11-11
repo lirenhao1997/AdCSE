@@ -17,10 +17,7 @@ from transformers import (
     MODEL_FOR_MASKED_LM_MAPPING,
     AutoConfig,
     AutoModelForMaskedLM,
-    AutoModelForSequenceClassification,
     AutoTokenizer,
-    DataCollatorForLanguageModeling,
-    DataCollatorWithPadding,
     HfArgumentParser,
     Trainer,
     TrainingArguments,
@@ -29,14 +26,12 @@ from transformers import (
     EvalPrediction,
     BertModel,
     BertForPreTraining,
-    RobertaModel
 )
 from transformers.tokenization_utils_base import BatchEncoding, PaddingStrategy, PreTrainedTokenizerBase
 from transformers.trainer_utils import is_main_process
-from transformers.data.data_collator import DataCollatorForLanguageModeling
 from transformers.file_utils import cached_property, torch_required, is_torch_available, is_torch_tpu_available
-from simcse.models import BertForAdCSE, RobertaForAdCSE
-from simcse.trainers import CLTrainer, AdCSETrainer
+from adcse.models import BertForAdCSE
+from adcse.trainers import AdCSETrainer
 
 logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())
@@ -87,37 +82,14 @@ class ModelArguments:
         },
     )
 
-    # SimCSE's arguments
-    temp: float = field(
-        default=0.05,
-        metadata={
-            "help": "Temperature for softmax."
-        }
-    )
+    # AdCSE's arguments
     pooler_type: str = field(
         default="cls",
         metadata={
             "help": "What kind of pooler to use (cls, cls_before_pooler, avg, avg_top2, avg_first_last)."
         }
     )
-    hard_negative_weight: float = field(
-        default=0,
-        metadata={
-            "help": "The **logit** of weight for hard negatives (only effective if hard negatives are used)."
-        }
-    )
-    do_mlm: bool = field(
-        default=False,
-        metadata={
-            "help": "Whether to use MLM auxiliary objective."
-        }
-    )
-    mlm_weight: float = field(
-        default=0.1,
-        metadata={
-            "help": "Weight for MLM auxiliary objective (only effective if --do_mlm)."
-        }
-    )
+
     mlp_only_train: bool = field(
         default=False,
         metadata={
@@ -125,48 +97,46 @@ class ModelArguments:
         }
     )
 
-    # AdCSE参数
     moco_m: float = field(
-        default=0.999,
+        default=0.995,
         metadata={
             "help": "moco momentum of updating key encoder"
         }
     )
     moco_t: float = field(
-        default=0.12,
+        default=0.05,
         metadata={
             "help": "softmax temperature"
         }
     )
-    # 在AdCO中叫momentum
     mem_m: float = field(
         default=0.9,
         metadata={
-            "help": "momentum of updating the adversarial negatives"
+            "help": "momentum of updating the negative adversaries"
         }
     )
     mem_t: float = field(
-        default=0.02,
+        default=0.05,
         metadata={
-            "help": "temperature of the adversarial negatives"
+            "help": "temperature of the negative adversaries"
         }
     )
     mem_lr: float = field(
-        default=3,
+        default=3e-3,
         metadata={
-            "help": "learning rate of the adversarial negatives"
+            "help": "learning rate of the negative adversaries"
         }
     )
     mem_wd: float = field(
         default=1e-4,
         metadata={
-            "help": "weight decay of the adversarial negatives"
+            "help": "weight decay of the negative adversaries"
         }
     )    
     neg_num: int = field(
-        default=10000,
+        default=64,
         metadata={
-            "help": "number of the negative keys"
+            "help": "number of the negative adversaries"
         }
     )
     sym: bool = field(
@@ -204,7 +174,7 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
 
-    # SimCSE's arguments
+    # AdCSE's arguments
     train_file: Optional[str] = field(
         default=None,
         metadata={"help": "The training data file (.txt or .csv)."}
@@ -222,10 +192,6 @@ class DataTrainingArguments:
             "help": "Whether to pad all samples to `max_seq_length`. "
                     "If False, will pad the samples dynamically when batching to the maximum length in the batch."
         },
-    )
-    mlm_probability: float = field(
-        default=0.15,
-        metadata={"help": "Ratio of tokens to mask for MLM (only effective if --do_mlm)"}
     )
 
     def __post_init__(self):
@@ -401,17 +367,7 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        if 'roberta' in model_args.model_name_or_path:
-            model = RobertaForAdCSE.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                model_args=model_args
-            )
-        elif 'bert' in model_args.model_name_or_path:
+        if 'bert' in model_args.model_name_or_path:
             model = BertForAdCSE.from_pretrained(
                 model_args.model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -421,11 +377,6 @@ def main():
                 use_auth_token=True if model_args.use_auth_token else None,
                 model_args=model_args
             )
-
-            # if model_args.do_mlm:
-            #     pretrained_model = BertForPreTraining.from_pretrained(model_args.model_name_or_path)
-            #     model.lm_head.load_state_dict(pretrained_model.cls.predictions.state_dict())
-
         else:
             raise NotImplementedError
     else:
@@ -454,7 +405,6 @@ def main():
     else:
         raise NotImplementedError
 
-    # 在这里对sample做 tokenize, 映射 [raw text, pos sent, neg sent]
     def prepare_features(examples):
         # padding = longest (default)
         #   If no sentence in the batch exceed the max length, then use
@@ -463,7 +413,7 @@ def main():
         #   exceed the max length.
         # padding = max_length (when pad_to_max_length, for pressure test)
         #   All sentences are padded/truncated to data_args.max_seq_length.
-        total = len(examples[sent0_cname])  # 样本数
+        total = len(examples[sent0_cname])
 
         # Avoid "None" fields 
         for idx in range(total):
@@ -472,7 +422,6 @@ def main():
             if examples[sent1_cname][idx] is None:
                 examples[sent1_cname][idx] = " "
 
-        # 用同一个list顺序存 raw sent 和 pos sent, 如果是无监督相当于取两遍 raw sent
         sentences = examples[sent0_cname] + examples[sent1_cname]
 
         # If hard negative exists
@@ -491,8 +440,6 @@ def main():
         )
 
         features = {}
-        # 根据idx 0->total-1 为原句，total->total*2-1为正例，total*2->total*3-1为负例
-        # 这里是将一个样本的 raw text, pos sent, neg sent 存入同个list，再以 sent_feature 为key存入features字典
         if sent2_cname is not None:
             for key in sent_features:
                 features[key] = [
@@ -524,20 +471,16 @@ def main():
         padding: Union[bool, str, PaddingStrategy] = True
         max_length: Optional[int] = None
         pad_to_multiple_of: Optional[int] = None
-        mlm: bool = True
-        mlm_probability: float = data_args.mlm_probability
 
         def __call__(self, features: List[Dict[str, Union[List[int], List[List[int]], torch.Tensor]]]) -> Dict[
             str, torch.Tensor]:
-            special_keys = ['input_ids', 'attention_mask', 'token_type_ids', 'mlm_input_ids', 'mlm_labels']
+            special_keys = ['input_ids', 'attention_mask', 'token_type_ids']
             bs = len(features)  # batch size
-            # 每组样本的sent个数, [raw sent, pos sent]为2, [raw sent, pos sent, neg sent]为3
             if bs > 0:
                 num_sent = len(features[0]['input_ids'])
             else:
                 return
             flat_features = []
-            # 将内层样本sent展开到外层: [{"input_ids": [[],[]]}, ...] -> [{"input_ids": [], ...}, {"input_ids": [], ...}]
             for feature in features:
                 for i in range(num_sent):
                     flat_features.append({k: feature[k][i] if k in special_keys else feature[k] for k in feature})
@@ -550,8 +493,6 @@ def main():
                 pad_to_multiple_of=self.pad_to_multiple_of,
                 return_tensors="pt",
             )
-            if model_args.do_mlm:
-                batch["mlm_input_ids"], batch["mlm_labels"] = self.mask_tokens(batch["input_ids"])
 
             batch = {k: batch[k].view(bs, num_sent, -1) if k in special_keys else batch[k].view(bs, num_sent, -1)[:, 0]
                      for k in batch}
@@ -565,39 +506,6 @@ def main():
 
             return batch
 
-        def mask_tokens(
-                self, inputs: torch.Tensor, special_tokens_mask: Optional[torch.Tensor] = None
-        ) -> Tuple[torch.Tensor, torch.Tensor]:
-            """
-            Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original.
-            """
-            labels = inputs.clone()
-            # We sample a few tokens in each sequence for MLM training (with probability `self.mlm_probability`)
-            probability_matrix = torch.full(labels.shape, self.mlm_probability)
-            if special_tokens_mask is None:
-                special_tokens_mask = [
-                    self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in
-                    labels.tolist()
-                ]
-                special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
-            else:
-                special_tokens_mask = special_tokens_mask.bool()
-
-            probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-            masked_indices = torch.bernoulli(probability_matrix).bool()
-            labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-            # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-            indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
-            inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
-
-            # 10% of the time, we replace masked input tokens with random word
-            indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
-            random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
-            inputs[indices_random] = random_words[indices_random]
-
-            # The rest of the time (10% of the time) we keep the masked input tokens unchanged
-            return inputs, labels
 
     data_collator = default_data_collator if data_args.pad_to_max_length else OurDataCollatorWithPadding(tokenizer)
 
@@ -646,11 +554,6 @@ def main():
                     writer.write(f"{key} = {value}\n")
 
     return results
-
-
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
 
 
 if __name__ == "__main__":
