@@ -10,6 +10,7 @@ This repository contains the source code for our paper [AdCSE: An Adversarial Me
     - [Requirements](#requirements)
     - [Evaluation](#evaluation)
     - [Training](#training)
+  - [Citation](#citation)
 
 
 ## Overview
@@ -109,7 +110,7 @@ We use the following hyperparamters for training AdCSE:
 | Weight decay for negative adversaries| 1e-4 |
 | Number of hard negatives | 64 |
 
-## Citations
+## Citation
 
 Please cite our paper if you use AdCSE in your work:
 
