@@ -1,6 +1,6 @@
 ## AdCSE: An Adversarial Method for Contrastive Learning of Sentence Embeddings
 
-This repository contains the source code for our paper [AdCSE: An Adversarial Method for Contrastive Learning of Sentence Embeddings](https://anonymous.4open.science/r/AdCSE-2B77).
+This repository contains the source code for our paper [AdCSE: An Adversarial Method for Contrastive Learning of Sentence Embeddings](https://link.springer.com/chapter/10.1007/978-3-031-00129-1_11).
 
 
 ## Quick Links
@@ -108,3 +108,17 @@ We use the following hyperparamters for training AdCSE:
 | Momentum for encoder $p$ | 0.995 |
 | Weight decay for negative adversaries| 1e-4 |
 | Number of hard negatives | 64 |
+
+## Citations
+
+Please cite our paper if you use AdCSE in your work:
+
+```bibtex
+@inproceedings{li2022adcse,
+  title={AdCSE: An Adversarial Method for Contrastive Learning of Sentence Embeddings},
+  author={Li, Renhao and Duan, Lei and Xie, Guicai and Xiao, Shan and Jiang, Weipeng},
+  booktitle={International Conference on Database Systems for Advanced Applications},
+  pages={165--180},
+  year={2022},
+}
+```
